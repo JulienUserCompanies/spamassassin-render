@@ -12,7 +12,7 @@ class CheckRequest(BaseModel):
 def health():
     try:
         result = subprocess.run(
-            ["spamc", "-R", "-d", "127.0.0.1", "-p", "783", "-t", "5"],
+            ["spamc", "-R", "-d", "127.0.0.1", "-p", "1783", "-t", "5"],
             input="Subject: healthcheck\n\nhello".encode(),
             capture_output=True,
             timeout=8,
@@ -30,7 +30,7 @@ def check(req: CheckRequest):
 
     try:
         result = subprocess.run(
-            ["spamc", "-R", "-d", "127.0.0.1", "-p", "783", "-t", "8"],
+            ["spamc", "-R", "-d", "127.0.0.1", "-p", "1783", "-t", "8"],
             input=req.content.encode(),
             capture_output=True,
             timeout=12,
