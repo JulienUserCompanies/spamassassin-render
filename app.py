@@ -1,3 +1,4 @@
+cat > app.py <<'EOF'
 import re
 import subprocess
 from fastapi import FastAPI, HTTPException
@@ -5,15 +6,23 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-
 class CheckRequest(BaseModel):
     content: str
 
-
 @app.get("/health")
 def health():
-    return {"ok": True}
-
+    try:
+        result = subprocess.run(
+            ["spamc", "-R", "-d", "127.0.0.1", "-p", "783", "-t", "5"],
+            input="Subject: healthcheck\n\nhello".encode(),
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
+        ok = result.returncode == 0
+        return {"ok": ok}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.post("/check")
 def check(req: CheckRequest):
@@ -22,47 +31,49 @@ def check(req: CheckRequest):
 
     try:
         result = subprocess.run(
-            ["spamassassin", "-t"],
+            ["spamc", "-R", "-d", "127.0.0.1", "-p", "783", "-t", "8"],
             input=req.content.encode(),
             capture_output=True,
-            timeout=20,
+            timeout=12,
             check=False,
         )
 
-        output = result.stdout.decode(errors="replace")
+        output = result.stdout.decode(errors="replace").strip()
 
-        if not output.strip():
-            raise HTTPException(status_code=502, detail="empty response from spamassassin")
+        if not output:
+            raise HTTPException(status_code=502, detail="empty response from spamc")
+
+        lines = output.splitlines()
+        first = lines[0].strip()
 
         score = 0.0
         threshold = 5.0
+
+        m = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)", first)
+        if m:
+            score = float(m.group(1))
+            threshold = float(m.group(2))
+
         rules = []
 
-        # Parse X-Spam-Status header, example:
-        # X-Spam-Status: Yes, score=6.2 required=5.0 tests=...
-        status_match = re.search(
-            r"X-Spam-Status:\s+\w+,\s+score=([-]?\d+(?:\.\d+)?)\s+required=([-]?\d+(?:\.\d+)?)",
-            output,
-            re.IGNORECASE,
-        )
-        if status_match:
-            score = float(status_match.group(1))
-            threshold = float(status_match.group(2))
-
-        # Parse tests list if present
-        tests_match = re.search(r"tests=([^\n\r]*)", output, re.IGNORECASE)
-        if tests_match:
-            test_names = [t.strip() for t in tests_match.group(1).split(",") if t.strip()]
-            rules = [{"name": name, "score": 0.0, "description": ""} for name in test_names]
+        for line in lines[1:]:
+            rule_match = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s+([A-Z0-9_]+)\s+(.*)$", line)
+            if rule_match:
+                rules.append({
+                    "name": rule_match.group(2),
+                    "score": float(rule_match.group(1)),
+                    "description": rule_match.group(3).strip(),
+                })
 
         return {
             "score": score,
             "threshold": threshold,
             "rules": rules,
-            "version": "SpamAssassin CLI service",
+            "version": "SpamAssassin external service",
         }
 
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="SpamAssassin timeout")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+EOF
