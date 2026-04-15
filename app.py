@@ -1,4 +1,3 @@
-cat > app.py <<'EOF'
 import re
 import subprocess
 from fastapi import FastAPI, HTTPException
